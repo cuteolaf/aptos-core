@@ -39,6 +39,7 @@
 -  [Function `create_proposal`](#0x1_voting_create_proposal)
 -  [Function `vote`](#0x1_voting_vote)
 -  [Function `resolve`](#0x1_voting_resolve)
+-  [Function `resolve_multi_step_proposal`](#0x1_voting_resolve_multi_step_proposal)
 -  [Function `is_voting_closed`](#0x1_voting_is_voting_closed)
 -  [Function `can_be_resolved_early`](#0x1_voting_can_be_resolved_early)
 -  [Function `get_proposal_state`](#0x1_voting_get_proposal_state)
@@ -474,6 +475,26 @@ Current script's execution hash does not match the specified proposal's
 
 
 
+<a name="0x1_voting_EPROPOSAL_IS_NOT_MULTI_STEP"></a>
+
+Abort when we call a multi-step proposal function with a single-step proposal
+
+
+<pre><code><b>const</b> <a href="voting.md#0x1_voting_EPROPOSAL_IS_NOT_MULTI_STEP">EPROPOSAL_IS_NOT_MULTI_STEP</a>: u64 = 9;
+</code></pre>
+
+
+
+<a name="0x1_voting_EPROPOSAL_IS_NOT_SINGLE_STEP"></a>
+
+Abort when we call a single-step proposal function with a multi-step proposal
+
+
+<pre><code><b>const</b> <a href="voting.md#0x1_voting_EPROPOSAL_IS_NOT_SINGLE_STEP">EPROPOSAL_IS_NOT_SINGLE_STEP</a>: u64 = 10;
+</code></pre>
+
+
+
 <a name="0x1_voting_EPROPOSAL_VOTING_ALREADY_ENDED"></a>
 
 Proposal's voting period has already ended.
@@ -500,6 +521,26 @@ Voting forum has already been registered.
 
 
 <pre><code><b>const</b> <a href="voting.md#0x1_voting_EVOTING_FORUM_ALREADY_REGISTERED">EVOTING_FORUM_ALREADY_REGISTERED</a>: u64 = 6;
+</code></pre>
+
+
+
+<a name="0x1_voting_IS_MULTI_STEP_PROPOSAL_KEY"></a>
+
+Key used to track if the proposal is multi-step
+
+
+<pre><code><b>const</b> <a href="voting.md#0x1_voting_IS_MULTI_STEP_PROPOSAL_KEY">IS_MULTI_STEP_PROPOSAL_KEY</a>: <a href="../../aptos-stdlib/../move-stdlib/doc/vector.md#0x1_vector">vector</a>&lt;u8&gt; = [73, 83, 95, 77, 85, 76, 84, 73, 95, 83, 84, 69, 80, 95, 80, 82, 79, 80, 79, 83, 65, 76, 95, 75, 69, 89];
+</code></pre>
+
+
+
+<a name="0x1_voting_MULTI_STEP_PROPOSAL"></a>
+
+Stored in a proposal's metadata to indicate that the given proposal is multi-step
+
+
+<pre><code><b>const</b> <a href="voting.md#0x1_voting_MULTI_STEP_PROPOSAL">MULTI_STEP_PROPOSAL</a>: <a href="../../aptos-stdlib/../move-stdlib/doc/vector.md#0x1_vector">vector</a>&lt;u8&gt; = [77, 85, 76, 84, 73, 95, 83, 84, 69, 80, 95, 80, 82, 79, 80, 79, 83, 65, 76];
 </code></pre>
 
 
@@ -539,6 +580,16 @@ Key used to track the resolvable time in the proposal's metadata.
 
 
 <pre><code><b>const</b> <a href="voting.md#0x1_voting_RESOLVABLE_TIME_METADATA_KEY">RESOLVABLE_TIME_METADATA_KEY</a>: <a href="../../aptos-stdlib/../move-stdlib/doc/vector.md#0x1_vector">vector</a>&lt;u8&gt; = [82, 69, 83, 79, 76, 86, 65, 66, 76, 69, 95, 84, 73, 77, 69, 95, 77, 69, 84, 65, 68, 65, 84, 65, 95, 75, 69, 89];
+</code></pre>
+
+
+
+<a name="0x1_voting_SINGLE_STEP_PROPOSAL"></a>
+
+Stored in a proposal's metadata to indicate that the given proposal is single-step
+
+
+<pre><code><b>const</b> <a href="voting.md#0x1_voting_SINGLE_STEP_PROPOSAL">SINGLE_STEP_PROPOSAL</a>: <a href="../../aptos-stdlib/../move-stdlib/doc/vector.md#0x1_vector">vector</a>&lt;u8&gt; = [83, 73, 78, 71, 76, 69, 95, 83, 84, 69, 80, 95, 80, 82, 79, 80, 79, 83, 65, 76];
 </code></pre>
 
 
@@ -769,6 +820,9 @@ there are more yes votes than no. If either of these conditions is not met, this
     <b>let</b> proposal = <a href="../../aptos-stdlib/doc/table.md#0x1_table_borrow_mut">table::borrow_mut</a>(&<b>mut</b> voting_forum.proposals, proposal_id);
     <b>assert</b>!(!proposal.is_resolved, <a href="../../aptos-stdlib/../move-stdlib/doc/error.md#0x1_error_invalid_state">error::invalid_state</a>(<a href="voting.md#0x1_voting_EPROPOSAL_ALREADY_RESOLVED">EPROPOSAL_ALREADY_RESOLVED</a>));
 
+    <b>let</b> multi_step_key = utf8(<a href="voting.md#0x1_voting_IS_MULTI_STEP_PROPOSAL_KEY">IS_MULTI_STEP_PROPOSAL_KEY</a>);
+    <b>assert</b>!(!<a href="../../aptos-stdlib/doc/simple_map.md#0x1_simple_map_contains_key">simple_map::contains_key</a>(&proposal.metadata, &multi_step_key) || *<a href="../../aptos-stdlib/doc/simple_map.md#0x1_simple_map_borrow">simple_map::borrow</a>(&proposal.metadata, &multi_step_key) == <a href="voting.md#0x1_voting_SINGLE_STEP_PROPOSAL">SINGLE_STEP_PROPOSAL</a>, <a href="../../aptos-stdlib/../move-stdlib/doc/error.md#0x1_error_unauthenticated">error::unauthenticated</a>(<a href="voting.md#0x1_voting_EPROPOSAL_IS_NOT_SINGLE_STEP">EPROPOSAL_IS_NOT_SINGLE_STEP</a>));
+
     // We need <b>to</b> make sure that the resolution is happening in
     // a separate transaction from the last vote <b>to</b> guard against <a href="../../aptos-stdlib/doc/any.md#0x1_any">any</a> potential flashloan attacks.
     <b>let</b> resolvable_time = to_u64(*<a href="../../aptos-stdlib/doc/simple_map.md#0x1_simple_map_borrow">simple_map::borrow</a>(&proposal.metadata, &utf8(<a href="voting.md#0x1_voting_RESOLVABLE_TIME_METADATA_KEY">RESOLVABLE_TIME_METADATA_KEY</a>)));
@@ -794,6 +848,75 @@ there are more yes votes than no. If either of these conditions is not met, this
     );
 
     <a href="../../aptos-stdlib/../move-stdlib/doc/option.md#0x1_option_extract">option::extract</a>(&<b>mut</b> proposal.execution_content)
+}
+</code></pre>
+
+
+
+</details>
+
+<a name="0x1_voting_resolve_multi_step_proposal"></a>
+
+## Function `resolve_multi_step_proposal`
+
+Resolve the multi-step proposal with given id. Can only be done if there are at least as many votes as min required and
+there are more yes votes than no. If either of these conditions is not met, this will revert.
+
+@param voting_forum_address The address of the forum where the proposals are stored.
+@param proposal_id The proposal id.
+@param next_execution_hash The next execution hash of this multi-step proposal
+
+
+<pre><code><b>public</b> <b>fun</b> <a href="voting.md#0x1_voting_resolve_multi_step_proposal">resolve_multi_step_proposal</a>&lt;ProposalType: store&gt;(voting_forum_address: <b>address</b>, proposal_id: u64, curr_execution_hash: <a href="../../aptos-stdlib/../move-stdlib/doc/vector.md#0x1_vector">vector</a>&lt;u8&gt;, next_execution_hash: <a href="../../aptos-stdlib/../move-stdlib/doc/vector.md#0x1_vector">vector</a>&lt;u8&gt;)
+</code></pre>
+
+
+
+<details>
+<summary>Implementation</summary>
+
+
+<pre><code><b>public</b> <b>fun</b> <a href="voting.md#0x1_voting_resolve_multi_step_proposal">resolve_multi_step_proposal</a>&lt;ProposalType: store&gt;(
+    voting_forum_address: <b>address</b>,
+    proposal_id: u64,
+    curr_execution_hash: <a href="../../aptos-stdlib/../move-stdlib/doc/vector.md#0x1_vector">vector</a>&lt;u8&gt;,
+    next_execution_hash: <a href="../../aptos-stdlib/../move-stdlib/doc/vector.md#0x1_vector">vector</a>&lt;u8&gt;,
+) <b>acquires</b> <a href="voting.md#0x1_voting_VotingForum">VotingForum</a> {
+    <b>let</b> proposal_state = <a href="voting.md#0x1_voting_get_proposal_state">get_proposal_state</a>&lt;ProposalType&gt;(voting_forum_address, proposal_id);
+    <b>assert</b>!(proposal_state == <a href="voting.md#0x1_voting_PROPOSAL_STATE_SUCCEEDED">PROPOSAL_STATE_SUCCEEDED</a>, <a href="../../aptos-stdlib/../move-stdlib/doc/error.md#0x1_error_invalid_state">error::invalid_state</a>(<a href="voting.md#0x1_voting_EPROPOSAL_CANNOT_BE_RESOLVED">EPROPOSAL_CANNOT_BE_RESOLVED</a>));
+
+    <b>let</b> voting_forum = <b>borrow_global_mut</b>&lt;<a href="voting.md#0x1_voting_VotingForum">VotingForum</a>&lt;ProposalType&gt;&gt;(voting_forum_address);
+    <b>let</b> proposal = <a href="../../aptos-stdlib/doc/table.md#0x1_table_borrow_mut">table::borrow_mut</a>(&<b>mut</b> voting_forum.proposals, proposal_id);
+    <b>assert</b>!(!proposal.is_resolved, <a href="../../aptos-stdlib/../move-stdlib/doc/error.md#0x1_error_invalid_state">error::invalid_state</a>(<a href="voting.md#0x1_voting_EPROPOSAL_ALREADY_RESOLVED">EPROPOSAL_ALREADY_RESOLVED</a>));
+
+    <b>let</b> multi_step_key = utf8(<a href="voting.md#0x1_voting_IS_MULTI_STEP_PROPOSAL_KEY">IS_MULTI_STEP_PROPOSAL_KEY</a>);
+    <b>assert</b>!(<a href="../../aptos-stdlib/doc/simple_map.md#0x1_simple_map_contains_key">simple_map::contains_key</a>(&proposal.metadata, &multi_step_key) && *<a href="../../aptos-stdlib/doc/simple_map.md#0x1_simple_map_borrow">simple_map::borrow</a>(&proposal.metadata, &multi_step_key) == <a href="voting.md#0x1_voting_MULTI_STEP_PROPOSAL">MULTI_STEP_PROPOSAL</a>, <a href="../../aptos-stdlib/../move-stdlib/doc/error.md#0x1_error_unauthenticated">error::unauthenticated</a>(<a href="voting.md#0x1_voting_EPROPOSAL_IS_NOT_MULTI_STEP">EPROPOSAL_IS_NOT_MULTI_STEP</a>));
+
+    <b>let</b> resolvable_time = to_u64(*<a href="../../aptos-stdlib/doc/simple_map.md#0x1_simple_map_borrow">simple_map::borrow</a>(&proposal.metadata, &utf8(<a href="voting.md#0x1_voting_RESOLVABLE_TIME_METADATA_KEY">RESOLVABLE_TIME_METADATA_KEY</a>)));
+    <b>assert</b>!(<a href="timestamp.md#0x1_timestamp_now_seconds">timestamp::now_seconds</a>() &gt; resolvable_time, <a href="../../aptos-stdlib/../move-stdlib/doc/error.md#0x1_error_invalid_state">error::invalid_state</a>(<a href="voting.md#0x1_voting_ERESOLUTION_CANNOT_BE_ATOMIC">ERESOLUTION_CANNOT_BE_ATOMIC</a>));
+
+    <b>assert</b>!(
+        <a href="transaction_context.md#0x1_transaction_context_get_script_hash">transaction_context::get_script_hash</a>() == curr_execution_hash,
+        <a href="../../aptos-stdlib/../move-stdlib/doc/error.md#0x1_error_invalid_argument">error::invalid_argument</a>(<a href="voting.md#0x1_voting_EPROPOSAL_EXECUTION_HASH_NOT_MATCHING">EPROPOSAL_EXECUTION_HASH_NOT_MATCHING</a>),
+    );
+
+    // <b>if</b> next execution <a href="../../aptos-stdlib/doc/hash.md#0x1_hash">hash</a> is empty, it means that the current execution <a href="../../aptos-stdlib/doc/hash.md#0x1_hash">hash</a> is the last step of the proposal
+    // and we can mark that this proposal is resolved and emit events
+    <b>if</b> (<a href="../../aptos-stdlib/../move-stdlib/doc/vector.md#0x1_vector_length">vector::length</a>(&next_execution_hash) == 0) {
+        <b>let</b> resolved_early = <a href="voting.md#0x1_voting_can_be_resolved_early">can_be_resolved_early</a>(proposal);
+        proposal.is_resolved = <b>true</b>;
+        proposal.resolution_time_secs = <a href="timestamp.md#0x1_timestamp_now_seconds">timestamp::now_seconds</a>();
+
+        <a href="event.md#0x1_event_emit_event">event::emit_event</a>&lt;<a href="voting.md#0x1_voting_ResolveProposal">ResolveProposal</a>&gt;(
+            &<b>mut</b> voting_forum.events.resolve_proposal_events,
+            <a href="voting.md#0x1_voting_ResolveProposal">ResolveProposal</a> {
+                proposal_id,
+                yes_votes: proposal.yes_votes,
+                no_votes: proposal.no_votes,
+                resolved_early,
+            },
+        );
+    }
 }
 </code></pre>
 

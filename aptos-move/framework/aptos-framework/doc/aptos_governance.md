@@ -35,16 +35,21 @@
 -  [Function `get_min_voting_threshold`](#0x1_aptos_governance_get_min_voting_threshold)
 -  [Function `get_required_proposer_stake`](#0x1_aptos_governance_get_required_proposer_stake)
 -  [Function `create_proposal`](#0x1_aptos_governance_create_proposal)
+-  [Function `create_proposal_generic`](#0x1_aptos_governance_create_proposal_generic)
 -  [Function `vote`](#0x1_aptos_governance_vote)
 -  [Function `add_approved_script_hash_script`](#0x1_aptos_governance_add_approved_script_hash_script)
 -  [Function `add_approved_script_hash`](#0x1_aptos_governance_add_approved_script_hash)
+-  [Function `replace_approved_hash`](#0x1_aptos_governance_replace_approved_hash)
+-  [Function `get_execution_hash`](#0x1_aptos_governance_get_execution_hash)
 -  [Function `resolve`](#0x1_aptos_governance_resolve)
+-  [Function `resolve_multi_step_proposal`](#0x1_aptos_governance_resolve_multi_step_proposal)
 -  [Function `remove_approved_hash`](#0x1_aptos_governance_remove_approved_hash)
 -  [Function `reconfigure`](#0x1_aptos_governance_reconfigure)
 -  [Function `get_signer_testnet_only`](#0x1_aptos_governance_get_signer_testnet_only)
 -  [Function `get_voting_power`](#0x1_aptos_governance_get_voting_power)
 -  [Function `get_signer`](#0x1_aptos_governance_get_signer)
 -  [Function `create_proposal_metadata`](#0x1_aptos_governance_create_proposal_metadata)
+-  [Function `add_is_multi_step_proposal_flag`](#0x1_aptos_governance_add_is_multi_step_proposal_flag)
 -  [Function `initialize_for_verification`](#0x1_aptos_governance_initialize_for_verification)
 -  [Specification](#@Specification_1)
     -  [Function `reconfigure`](#@Specification_1_reconfigure)
@@ -419,12 +424,42 @@ Event emitted when the governance configs are updated.
 ## Constants
 
 
+<a name="0x1_aptos_governance_IS_MULTI_STEP_PROPOSAL_KEY"></a>
+
+Key used to track if the proposal is multi-step
+
+
+<pre><code><b>const</b> <a href="aptos_governance.md#0x1_aptos_governance_IS_MULTI_STEP_PROPOSAL_KEY">IS_MULTI_STEP_PROPOSAL_KEY</a>: <a href="../../aptos-stdlib/../move-stdlib/doc/vector.md#0x1_vector">vector</a>&lt;u8&gt; = [73, 83, 95, 77, 85, 76, 84, 73, 95, 83, 84, 69, 80, 95, 80, 82, 79, 80, 79, 83, 65, 76, 95, 75, 69, 89];
+</code></pre>
+
+
+
+<a name="0x1_aptos_governance_MULTI_STEP_PROPOSAL"></a>
+
+Stored in a proposal's metadata to indicate that the given proposal is multi-step
+
+
+<pre><code><b>const</b> <a href="aptos_governance.md#0x1_aptos_governance_MULTI_STEP_PROPOSAL">MULTI_STEP_PROPOSAL</a>: <a href="../../aptos-stdlib/../move-stdlib/doc/vector.md#0x1_vector">vector</a>&lt;u8&gt; = [77, 85, 76, 84, 73, 95, 83, 84, 69, 80, 95, 80, 82, 79, 80, 79, 83, 65, 76];
+</code></pre>
+
+
+
 <a name="0x1_aptos_governance_PROPOSAL_STATE_SUCCEEDED"></a>
 
 This matches the same enum const in voting. We have to duplicate it as Move doesn't have support for enums yet.
 
 
 <pre><code><b>const</b> <a href="aptos_governance.md#0x1_aptos_governance_PROPOSAL_STATE_SUCCEEDED">PROPOSAL_STATE_SUCCEEDED</a>: u64 = 1;
+</code></pre>
+
+
+
+<a name="0x1_aptos_governance_SINGLE_STEP_PROPOSAL"></a>
+
+Stored in a proposal's metadata to indicate that the given proposal is single-step
+
+
+<pre><code><b>const</b> <a href="aptos_governance.md#0x1_aptos_governance_SINGLE_STEP_PROPOSAL">SINGLE_STEP_PROPOSAL</a>: <a href="../../aptos-stdlib/../move-stdlib/doc/vector.md#0x1_vector">vector</a>&lt;u8&gt; = [83, 73, 78, 71, 76, 69, 95, 83, 84, 69, 80, 95, 80, 82, 79, 80, 79, 83, 65, 76];
 </code></pre>
 
 
@@ -495,6 +530,26 @@ The specified stake pool must be part of the validator set
 
 
 <pre><code><b>const</b> <a href="aptos_governance.md#0x1_aptos_governance_ENO_VOTING_POWER">ENO_VOTING_POWER</a>: u64 = 5;
+</code></pre>
+
+
+
+<a name="0x1_aptos_governance_EPROPOSAL_ID_DOES_NOT_EXIST"></a>
+
+The given proposal_id does not exist
+
+
+<pre><code><b>const</b> <a href="aptos_governance.md#0x1_aptos_governance_EPROPOSAL_ID_DOES_NOT_EXIST">EPROPOSAL_ID_DOES_NOT_EXIST</a>: u64 = 12;
+</code></pre>
+
+
+
+<a name="0x1_aptos_governance_EPROPOSAL_METADATA_INVALID_KEY"></a>
+
+The proposal metadata key is invalid
+
+
+<pre><code><b>const</b> <a href="aptos_governance.md#0x1_aptos_governance_EPROPOSAL_METADATA_INVALID_KEY">EPROPOSAL_METADATA_INVALID_KEY</a>: u64 = 13;
 </code></pre>
 
 
@@ -841,6 +896,101 @@ only the exact script with matching hash can be successfully executed.
 
 </details>
 
+<a name="0x1_aptos_governance_create_proposal_generic"></a>
+
+## Function `create_proposal_generic`
+
+Create a proposal with the backing <code>stake_pool</code>.
+@param execution_hash Required. This is the hash of the resolution script. When the proposal is resolved,
+only the exact script with matching hash can be successfully executed.
+
+
+<pre><code><b>public</b> entry <b>fun</b> <a href="aptos_governance.md#0x1_aptos_governance_create_proposal_generic">create_proposal_generic</a>(proposer: &<a href="../../aptos-stdlib/../move-stdlib/doc/signer.md#0x1_signer">signer</a>, stake_pool: <b>address</b>, execution_hash: <a href="../../aptos-stdlib/../move-stdlib/doc/vector.md#0x1_vector">vector</a>&lt;u8&gt;, metadata_location: <a href="../../aptos-stdlib/../move-stdlib/doc/vector.md#0x1_vector">vector</a>&lt;u8&gt;, metadata_hash: <a href="../../aptos-stdlib/../move-stdlib/doc/vector.md#0x1_vector">vector</a>&lt;u8&gt;, is_multi_step_proposal: bool)
+</code></pre>
+
+
+
+<details>
+<summary>Implementation</summary>
+
+
+<pre><code><b>public</b> entry <b>fun</b> <a href="aptos_governance.md#0x1_aptos_governance_create_proposal_generic">create_proposal_generic</a>(
+    proposer: &<a href="../../aptos-stdlib/../move-stdlib/doc/signer.md#0x1_signer">signer</a>,
+    stake_pool: <b>address</b>,
+    execution_hash: <a href="../../aptos-stdlib/../move-stdlib/doc/vector.md#0x1_vector">vector</a>&lt;u8&gt;,
+    metadata_location: <a href="../../aptos-stdlib/../move-stdlib/doc/vector.md#0x1_vector">vector</a>&lt;u8&gt;,
+    metadata_hash: <a href="../../aptos-stdlib/../move-stdlib/doc/vector.md#0x1_vector">vector</a>&lt;u8&gt;,
+    is_multi_step_proposal: bool,
+) <b>acquires</b> <a href="aptos_governance.md#0x1_aptos_governance_GovernanceConfig">GovernanceConfig</a>, <a href="aptos_governance.md#0x1_aptos_governance_GovernanceEvents">GovernanceEvents</a> {
+    <b>let</b> proposer_address = <a href="../../aptos-stdlib/../move-stdlib/doc/signer.md#0x1_signer_address_of">signer::address_of</a>(proposer);
+    <b>assert</b>!(<a href="stake.md#0x1_stake_get_delegated_voter">stake::get_delegated_voter</a>(stake_pool) == proposer_address, <a href="../../aptos-stdlib/../move-stdlib/doc/error.md#0x1_error_invalid_argument">error::invalid_argument</a>(<a href="aptos_governance.md#0x1_aptos_governance_ENOT_DELEGATED_VOTER">ENOT_DELEGATED_VOTER</a>));
+
+    // The proposer's <a href="stake.md#0x1_stake">stake</a> needs <b>to</b> be at least the required bond amount.
+    <b>let</b> governance_config = <b>borrow_global</b>&lt;<a href="aptos_governance.md#0x1_aptos_governance_GovernanceConfig">GovernanceConfig</a>&gt;(@aptos_framework);
+    <b>let</b> stake_balance = <a href="aptos_governance.md#0x1_aptos_governance_get_voting_power">get_voting_power</a>(stake_pool);
+    <b>assert</b>!(
+        stake_balance &gt;= governance_config.required_proposer_stake,
+        <a href="../../aptos-stdlib/../move-stdlib/doc/error.md#0x1_error_invalid_argument">error::invalid_argument</a>(<a href="aptos_governance.md#0x1_aptos_governance_EINSUFFICIENT_PROPOSER_STAKE">EINSUFFICIENT_PROPOSER_STAKE</a>),
+    );
+
+    // The proposer's <a href="stake.md#0x1_stake">stake</a> needs <b>to</b> be locked up at least <b>as</b> long <b>as</b> the proposal's <a href="voting.md#0x1_voting">voting</a> period.
+    <b>let</b> current_time = <a href="timestamp.md#0x1_timestamp_now_seconds">timestamp::now_seconds</a>();
+    <b>let</b> proposal_expiration = current_time + governance_config.voting_duration_secs;
+    <b>assert</b>!(
+        <a href="stake.md#0x1_stake_get_lockup_secs">stake::get_lockup_secs</a>(stake_pool) &gt;= proposal_expiration,
+        <a href="../../aptos-stdlib/../move-stdlib/doc/error.md#0x1_error_invalid_argument">error::invalid_argument</a>(<a href="aptos_governance.md#0x1_aptos_governance_EINSUFFICIENT_STAKE_LOCKUP">EINSUFFICIENT_STAKE_LOCKUP</a>),
+    );
+
+    // Create and validate proposal metadata.
+    <b>let</b> proposal_metadata = <a href="aptos_governance.md#0x1_aptos_governance_create_proposal_metadata">create_proposal_metadata</a>(metadata_location, metadata_hash);
+
+    <b>if</b> (is_multi_step_proposal) {
+        <a href="aptos_governance.md#0x1_aptos_governance_add_is_multi_step_proposal_flag">add_is_multi_step_proposal_flag</a>(&<b>mut</b> proposal_metadata, <a href="aptos_governance.md#0x1_aptos_governance_MULTI_STEP_PROPOSAL">MULTI_STEP_PROPOSAL</a>);
+    } <b>else</b> {
+        <a href="aptos_governance.md#0x1_aptos_governance_add_is_multi_step_proposal_flag">add_is_multi_step_proposal_flag</a>(&<b>mut</b> proposal_metadata, <a href="aptos_governance.md#0x1_aptos_governance_SINGLE_STEP_PROPOSAL">SINGLE_STEP_PROPOSAL</a>);
+    };
+
+    // We want <b>to</b> allow early resolution of proposals <b>if</b> more than 50% of the total supply of the network coins
+    // <b>has</b> voted. This doesn't take into subsequent inflation/deflation (rewards are issued every epoch and gas fees
+    // are burnt after every transaction), but inflation/delation is very unlikely <b>to</b> have a major impact on total
+    // supply during the <a href="voting.md#0x1_voting">voting</a> period.
+    <b>let</b> total_voting_token_supply = <a href="coin.md#0x1_coin_supply">coin::supply</a>&lt;AptosCoin&gt;();
+    <b>let</b> early_resolution_vote_threshold = <a href="../../aptos-stdlib/../move-stdlib/doc/option.md#0x1_option_none">option::none</a>&lt;u128&gt;();
+    <b>if</b> (<a href="../../aptos-stdlib/../move-stdlib/doc/option.md#0x1_option_is_some">option::is_some</a>(&total_voting_token_supply)) {
+        <b>let</b> total_supply = *<a href="../../aptos-stdlib/../move-stdlib/doc/option.md#0x1_option_borrow">option::borrow</a>(&total_voting_token_supply);
+        // 50% + 1 <b>to</b> avoid rounding errors.
+        early_resolution_vote_threshold = <a href="../../aptos-stdlib/../move-stdlib/doc/option.md#0x1_option_some">option::some</a>(total_supply / 2 + 1);
+    };
+
+    <b>let</b> proposal_id = <a href="voting.md#0x1_voting_create_proposal">voting::create_proposal</a>(
+        proposer_address,
+        @aptos_framework,
+        <a href="governance_proposal.md#0x1_governance_proposal_create_proposal">governance_proposal::create_proposal</a>(),
+        execution_hash,
+        governance_config.min_voting_threshold,
+        proposal_expiration,
+        early_resolution_vote_threshold,
+        proposal_metadata,
+    );
+
+    <b>let</b> events = <b>borrow_global_mut</b>&lt;<a href="aptos_governance.md#0x1_aptos_governance_GovernanceEvents">GovernanceEvents</a>&gt;(@aptos_framework);
+    <a href="event.md#0x1_event_emit_event">event::emit_event</a>&lt;<a href="aptos_governance.md#0x1_aptos_governance_CreateProposalEvent">CreateProposalEvent</a>&gt;(
+        &<b>mut</b> events.create_proposal_events,
+        <a href="aptos_governance.md#0x1_aptos_governance_CreateProposalEvent">CreateProposalEvent</a> {
+            proposal_id,
+            proposer: proposer_address,
+            stake_pool,
+            execution_hash,
+            proposal_metadata,
+        },
+    );
+}
+</code></pre>
+
+
+
+</details>
+
 <a name="0x1_aptos_governance_vote"></a>
 
 ## Function `vote`
@@ -981,6 +1131,73 @@ are too large (e.g. module upgrades).
 
 </details>
 
+<a name="0x1_aptos_governance_replace_approved_hash"></a>
+
+## Function `replace_approved_hash`
+
+Used when making a multi-step governance proposal.
+Replace the current execution hash in the <code><a href="aptos_governance.md#0x1_aptos_governance_ApprovedExecutionHashes">ApprovedExecutionHashes</a></code> with the next execution hash
+
+
+<pre><code><b>fun</b> <a href="aptos_governance.md#0x1_aptos_governance_replace_approved_hash">replace_approved_hash</a>(proposal_id: u64, next_execution_hash: <a href="../../aptos-stdlib/../move-stdlib/doc/vector.md#0x1_vector">vector</a>&lt;u8&gt;)
+</code></pre>
+
+
+
+<details>
+<summary>Implementation</summary>
+
+
+<pre><code><b>fun</b> <a href="aptos_governance.md#0x1_aptos_governance_replace_approved_hash">replace_approved_hash</a>(proposal_id: u64, next_execution_hash: <a href="../../aptos-stdlib/../move-stdlib/doc/vector.md#0x1_vector">vector</a>&lt;u8&gt;) <b>acquires</b> <a href="aptos_governance.md#0x1_aptos_governance_ApprovedExecutionHashes">ApprovedExecutionHashes</a> {
+    <b>let</b> approved_hashes = <b>borrow_global_mut</b>&lt;<a href="aptos_governance.md#0x1_aptos_governance_ApprovedExecutionHashes">ApprovedExecutionHashes</a>&gt;(@aptos_framework);
+    <b>if</b> (!<a href="../../aptos-stdlib/doc/simple_map.md#0x1_simple_map_contains_key">simple_map::contains_key</a>(&approved_hashes.hashes, &proposal_id)) {
+        <b>return</b>
+    };
+
+    <b>let</b> proposal_state = <a href="voting.md#0x1_voting_get_proposal_state">voting::get_proposal_state</a>&lt;GovernanceProposal&gt;(@aptos_framework, proposal_id);
+    <b>assert</b>!(proposal_state == <a href="aptos_governance.md#0x1_aptos_governance_PROPOSAL_STATE_SUCCEEDED">PROPOSAL_STATE_SUCCEEDED</a>, <a href="../../aptos-stdlib/../move-stdlib/doc/error.md#0x1_error_invalid_argument">error::invalid_argument</a>(<a href="aptos_governance.md#0x1_aptos_governance_EPROPOSAL_NOT_RESOLVABLE_YET">EPROPOSAL_NOT_RESOLVABLE_YET</a>));
+
+    <a href="../../aptos-stdlib/doc/simple_map.md#0x1_simple_map_remove">simple_map::remove</a>(&<b>mut</b> approved_hashes.hashes, &proposal_id);
+    <b>if</b> (<a href="../../aptos-stdlib/../move-stdlib/doc/vector.md#0x1_vector_length">vector::length</a>(&next_execution_hash)!=0) {
+        // <b>if</b> there's next step, replace it <b>with</b> the existing execution <a href="../../aptos-stdlib/doc/hash.md#0x1_hash">hash</a>
+        <a href="../../aptos-stdlib/doc/simple_map.md#0x1_simple_map_add">simple_map::add</a>(&<b>mut</b> approved_hashes.hashes, proposal_id, next_execution_hash);
+    };
+}
+</code></pre>
+
+
+
+</details>
+
+<a name="0x1_aptos_governance_get_execution_hash"></a>
+
+## Function `get_execution_hash`
+
+
+
+<pre><code><b>fun</b> <a href="aptos_governance.md#0x1_aptos_governance_get_execution_hash">get_execution_hash</a>(proposal_id: u64): <a href="../../aptos-stdlib/../move-stdlib/doc/vector.md#0x1_vector">vector</a>&lt;u8&gt;
+</code></pre>
+
+
+
+<details>
+<summary>Implementation</summary>
+
+
+<pre><code><b>fun</b> <a href="aptos_governance.md#0x1_aptos_governance_get_execution_hash">get_execution_hash</a>(proposal_id: u64): <a href="../../aptos-stdlib/../move-stdlib/doc/vector.md#0x1_vector">vector</a>&lt;u8&gt; <b>acquires</b> <a href="aptos_governance.md#0x1_aptos_governance_ApprovedExecutionHashes">ApprovedExecutionHashes</a> {
+   <b>let</b> approved_hashes = <b>borrow_global</b>&lt;<a href="aptos_governance.md#0x1_aptos_governance_ApprovedExecutionHashes">ApprovedExecutionHashes</a>&gt;(@aptos_framework);
+   <b>assert</b>!(<a href="../../aptos-stdlib/doc/simple_map.md#0x1_simple_map_contains_key">simple_map::contains_key</a>(&approved_hashes.hashes, &proposal_id), <a href="../../aptos-stdlib/../move-stdlib/doc/error.md#0x1_error_invalid_argument">error::invalid_argument</a>(<a href="aptos_governance.md#0x1_aptos_governance_EPROPOSAL_ID_DOES_NOT_EXIST">EPROPOSAL_ID_DOES_NOT_EXIST</a>));
+   <b>let</b> proposal_state = <a href="voting.md#0x1_voting_get_proposal_state">voting::get_proposal_state</a>&lt;GovernanceProposal&gt;(@aptos_framework, proposal_id);
+   <b>assert</b>!(proposal_state == <a href="aptos_governance.md#0x1_aptos_governance_PROPOSAL_STATE_SUCCEEDED">PROPOSAL_STATE_SUCCEEDED</a>, <a href="../../aptos-stdlib/../move-stdlib/doc/error.md#0x1_error_invalid_argument">error::invalid_argument</a>(<a href="aptos_governance.md#0x1_aptos_governance_EPROPOSAL_NOT_RESOLVABLE_YET">EPROPOSAL_NOT_RESOLVABLE_YET</a>));
+
+   *<a href="../../aptos-stdlib/doc/simple_map.md#0x1_simple_map_borrow">simple_map::borrow</a>(&approved_hashes.hashes, &proposal_id)
+}
+</code></pre>
+
+
+
+</details>
+
 <a name="0x1_aptos_governance_resolve"></a>
 
 ## Function `resolve`
@@ -1001,6 +1218,33 @@ than yes).
 <pre><code><b>public</b> <b>fun</b> <a href="aptos_governance.md#0x1_aptos_governance_resolve">resolve</a>(proposal_id: u64, signer_address: <b>address</b>): <a href="../../aptos-stdlib/../move-stdlib/doc/signer.md#0x1_signer">signer</a> <b>acquires</b> <a href="aptos_governance.md#0x1_aptos_governance_ApprovedExecutionHashes">ApprovedExecutionHashes</a>, <a href="aptos_governance.md#0x1_aptos_governance_GovernanceResponsbility">GovernanceResponsbility</a> {
     <a href="voting.md#0x1_voting_resolve">voting::resolve</a>&lt;GovernanceProposal&gt;(@aptos_framework, proposal_id);
     <a href="aptos_governance.md#0x1_aptos_governance_remove_approved_hash">remove_approved_hash</a>(proposal_id);
+    <a href="aptos_governance.md#0x1_aptos_governance_get_signer">get_signer</a>(signer_address)
+}
+</code></pre>
+
+
+
+</details>
+
+<a name="0x1_aptos_governance_resolve_multi_step_proposal"></a>
+
+## Function `resolve_multi_step_proposal`
+
+Resolve a successful multi-step proposal. This would fail if the proposal is not successful.
+
+
+<pre><code><b>public</b> <b>fun</b> <a href="aptos_governance.md#0x1_aptos_governance_resolve_multi_step_proposal">resolve_multi_step_proposal</a>(proposal_id: u64, signer_address: <b>address</b>, next_execution_hash: <a href="../../aptos-stdlib/../move-stdlib/doc/vector.md#0x1_vector">vector</a>&lt;u8&gt;): <a href="../../aptos-stdlib/../move-stdlib/doc/signer.md#0x1_signer">signer</a>
+</code></pre>
+
+
+
+<details>
+<summary>Implementation</summary>
+
+
+<pre><code><b>public</b> <b>fun</b> <a href="aptos_governance.md#0x1_aptos_governance_resolve_multi_step_proposal">resolve_multi_step_proposal</a>(proposal_id: u64, signer_address: <b>address</b>, next_execution_hash: <a href="../../aptos-stdlib/../move-stdlib/doc/vector.md#0x1_vector">vector</a>&lt;u8&gt;): <a href="../../aptos-stdlib/../move-stdlib/doc/signer.md#0x1_signer">signer</a> <b>acquires</b> <a href="aptos_governance.md#0x1_aptos_governance_ApprovedExecutionHashes">ApprovedExecutionHashes</a>, <a href="aptos_governance.md#0x1_aptos_governance_GovernanceResponsbility">GovernanceResponsbility</a> {
+    <a href="voting.md#0x1_voting_resolve_multi_step_proposal">voting::resolve_multi_step_proposal</a>&lt;GovernanceProposal&gt;(@aptos_framework, proposal_id, <a href="aptos_governance.md#0x1_aptos_governance_get_execution_hash">get_execution_hash</a>(proposal_id), next_execution_hash);
+    <a href="aptos_governance.md#0x1_aptos_governance_replace_approved_hash">replace_approved_hash</a>(proposal_id, next_execution_hash);
     <a href="aptos_governance.md#0x1_aptos_governance_get_signer">get_signer</a>(signer_address)
 }
 </code></pre>
@@ -1181,6 +1425,31 @@ Return a signer for making changes to 0x1 as part of on-chain governance proposa
     <a href="../../aptos-stdlib/doc/simple_map.md#0x1_simple_map_add">simple_map::add</a>(&<b>mut</b> metadata, utf8(<a href="aptos_governance.md#0x1_aptos_governance_METADATA_LOCATION_KEY">METADATA_LOCATION_KEY</a>), metadata_location);
     <a href="../../aptos-stdlib/doc/simple_map.md#0x1_simple_map_add">simple_map::add</a>(&<b>mut</b> metadata, utf8(<a href="aptos_governance.md#0x1_aptos_governance_METADATA_HASH_KEY">METADATA_HASH_KEY</a>), metadata_hash);
     metadata
+}
+</code></pre>
+
+
+
+</details>
+
+<a name="0x1_aptos_governance_add_is_multi_step_proposal_flag"></a>
+
+## Function `add_is_multi_step_proposal_flag`
+
+
+
+<pre><code><b>fun</b> <a href="aptos_governance.md#0x1_aptos_governance_add_is_multi_step_proposal_flag">add_is_multi_step_proposal_flag</a>(metadata: &<b>mut</b> <a href="../../aptos-stdlib/doc/simple_map.md#0x1_simple_map_SimpleMap">simple_map::SimpleMap</a>&lt;<a href="../../aptos-stdlib/../move-stdlib/doc/string.md#0x1_string_String">string::String</a>, <a href="../../aptos-stdlib/../move-stdlib/doc/vector.md#0x1_vector">vector</a>&lt;u8&gt;&gt;, is_multi_step_proposal_value: <a href="../../aptos-stdlib/../move-stdlib/doc/vector.md#0x1_vector">vector</a>&lt;u8&gt;)
+</code></pre>
+
+
+
+<details>
+<summary>Implementation</summary>
+
+
+<pre><code><b>fun</b> <a href="aptos_governance.md#0x1_aptos_governance_add_is_multi_step_proposal_flag">add_is_multi_step_proposal_flag</a>(metadata: &<b>mut</b> SimpleMap&lt;String, <a href="../../aptos-stdlib/../move-stdlib/doc/vector.md#0x1_vector">vector</a>&lt;u8&gt;&gt;, is_multi_step_proposal_value: <a href="../../aptos-stdlib/../move-stdlib/doc/vector.md#0x1_vector">vector</a>&lt;u8&gt;) {
+    <b>assert</b>!(is_multi_step_proposal_value == <a href="aptos_governance.md#0x1_aptos_governance_MULTI_STEP_PROPOSAL">MULTI_STEP_PROPOSAL</a> || is_multi_step_proposal_value == <a href="aptos_governance.md#0x1_aptos_governance_SINGLE_STEP_PROPOSAL">SINGLE_STEP_PROPOSAL</a>, <a href="../../aptos-stdlib/../move-stdlib/doc/error.md#0x1_error_invalid_argument">error::invalid_argument</a>(<a href="aptos_governance.md#0x1_aptos_governance_EPROPOSAL_METADATA_INVALID_KEY">EPROPOSAL_METADATA_INVALID_KEY</a>));
+    <a href="../../aptos-stdlib/doc/simple_map.md#0x1_simple_map_add">simple_map::add</a>(metadata, utf8(<a href="aptos_governance.md#0x1_aptos_governance_IS_MULTI_STEP_PROPOSAL_KEY">IS_MULTI_STEP_PROPOSAL_KEY</a>), is_multi_step_proposal_value);
 }
 </code></pre>
 

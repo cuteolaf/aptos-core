@@ -55,6 +55,10 @@ module aptos_framework::voting {
     const EINVALID_MIN_VOTE_THRESHOLD: u64 = 7;
     /// Resolution of a proposal cannot happen atomically in the same transaction as the last vote.
     const ERESOLUTION_CANNOT_BE_ATOMIC: u64 = 8;
+    /// Abort when we call a multi-step proposal function with a single-step proposal
+    const EPROPOSAL_IS_NOT_MULTI_STEP: u64 = 9;
+    /// Abort when we call a single-step proposal function with a multi-step proposal
+    const EPROPOSAL_IS_NOT_SINGLE_STEP: u64 = 10;
 
     /// ProposalStateEnum representing proposal state.
     const PROPOSAL_STATE_PENDING: u64 = 0;
@@ -64,6 +68,12 @@ module aptos_framework::voting {
 
     /// Key used to track the resolvable time in the proposal's metadata.
     const RESOLVABLE_TIME_METADATA_KEY: vector<u8> = b"RESOLVABLE_TIME_METADATA_KEY";
+    /// Key used to track if the proposal is multi-step
+    const IS_MULTI_STEP_PROPOSAL_KEY: vector<u8> = b"IS_MULTI_STEP_PROPOSAL_KEY";
+    /// Stored in a proposal's metadata to indicate that the given proposal is single-step
+    const SINGLE_STEP_PROPOSAL: vector<u8> = b"SINGLE_STEP_PROPOSAL";
+    /// Stored in a proposal's metadata to indicate that the given proposal is multi-step
+    const MULTI_STEP_PROPOSAL: vector<u8> = b"MULTI_STEP_PROPOSAL";
 
     /// Extra metadata (e.g. description, code url) can be part of the ProposalType struct.
     struct Proposal<ProposalType: store> has store {
@@ -299,6 +309,9 @@ module aptos_framework::voting {
         let proposal = table::borrow_mut(&mut voting_forum.proposals, proposal_id);
         assert!(!proposal.is_resolved, error::invalid_state(EPROPOSAL_ALREADY_RESOLVED));
 
+        let multi_step_key = utf8(IS_MULTI_STEP_PROPOSAL_KEY);
+        assert!(!simple_map::contains_key(&proposal.metadata, &multi_step_key) || *simple_map::borrow(&proposal.metadata, &multi_step_key) == SINGLE_STEP_PROPOSAL, error::unauthenticated(EPROPOSAL_IS_NOT_SINGLE_STEP));
+
         // We need to make sure that the resolution is happening in
         // a separate transaction from the last vote to guard against any potential flashloan attacks.
         let resolvable_time = to_u64(*simple_map::borrow(&proposal.metadata, &utf8(RESOLVABLE_TIME_METADATA_KEY)));
@@ -324,6 +337,55 @@ module aptos_framework::voting {
         );
 
         option::extract(&mut proposal.execution_content)
+    }
+
+    /// Resolve the multi-step proposal with given id. Can only be done if there are at least as many votes as min required and
+    /// there are more yes votes than no. If either of these conditions is not met, this will revert.
+    ///
+    /// @param voting_forum_address The address of the forum where the proposals are stored.
+    /// @param proposal_id The proposal id.
+    /// @param next_execution_hash The next execution hash of this multi-step proposal
+    public fun resolve_multi_step_proposal<ProposalType: store>(
+        voting_forum_address: address,
+        proposal_id: u64,
+        curr_execution_hash: vector<u8>,
+        next_execution_hash: vector<u8>,
+    ) acquires VotingForum {
+        let proposal_state = get_proposal_state<ProposalType>(voting_forum_address, proposal_id);
+        assert!(proposal_state == PROPOSAL_STATE_SUCCEEDED, error::invalid_state(EPROPOSAL_CANNOT_BE_RESOLVED));
+
+        let voting_forum = borrow_global_mut<VotingForum<ProposalType>>(voting_forum_address);
+        let proposal = table::borrow_mut(&mut voting_forum.proposals, proposal_id);
+        assert!(!proposal.is_resolved, error::invalid_state(EPROPOSAL_ALREADY_RESOLVED));
+
+        let multi_step_key = utf8(IS_MULTI_STEP_PROPOSAL_KEY);
+        assert!(simple_map::contains_key(&proposal.metadata, &multi_step_key) && *simple_map::borrow(&proposal.metadata, &multi_step_key) == MULTI_STEP_PROPOSAL, error::unauthenticated(EPROPOSAL_IS_NOT_MULTI_STEP));
+
+        let resolvable_time = to_u64(*simple_map::borrow(&proposal.metadata, &utf8(RESOLVABLE_TIME_METADATA_KEY)));
+        assert!(timestamp::now_seconds() > resolvable_time, error::invalid_state(ERESOLUTION_CANNOT_BE_ATOMIC));
+
+        assert!(
+            transaction_context::get_script_hash() == curr_execution_hash,
+            error::invalid_argument(EPROPOSAL_EXECUTION_HASH_NOT_MATCHING),
+        );
+
+        // if next execution hash is empty, it means that the current execution hash is the last step of the proposal
+        // and we can mark that this proposal is resolved and emit events
+        if (vector::length(&next_execution_hash) == 0) {
+            let resolved_early = can_be_resolved_early(proposal);
+            proposal.is_resolved = true;
+            proposal.resolution_time_secs = timestamp::now_seconds();
+
+            event::emit_event<ResolveProposal>(
+                &mut voting_forum.events.resolve_proposal_events,
+                ResolveProposal {
+                    proposal_id,
+                    yes_votes: proposal.yes_votes,
+                    no_votes: proposal.no_votes,
+                    resolved_early,
+                },
+            );
+        }
     }
 
     public fun is_voting_closed<ProposalType: store>(voting_forum_address: address, proposal_id: u64): bool acquires VotingForum {
@@ -410,9 +472,10 @@ module aptos_framework::voting {
     const VOTING_DURATION_SECS: u64 = 100000;
 
     #[test_only]
-    public fun create_test_proposal(
+    public fun create_test_proposal_generic(
         governance: &signer,
         early_resolution_threshold: Option<u128>,
+        is_multi_step: bool,
     ): u64 acquires VotingForum {
         // Register voting forum and create a proposal.
         register<TestProposal>(governance);
@@ -422,6 +485,10 @@ module aptos_framework::voting {
         // This works because our Move unit test extensions mock out the execution hash to be [1].
         let execution_hash = vector::empty<u8>();
         vector::push_back(&mut execution_hash, 1);
+        let metadata = simple_map::create<String, vector<u8>>();
+        if (is_multi_step) {
+            simple_map::add(&mut metadata, utf8(IS_MULTI_STEP_PROPOSAL_KEY), MULTI_STEP_PROPOSAL);
+        };
         let proposal_id = create_proposal<TestProposal>(
             governance_address,
             governance_address,
@@ -430,10 +497,29 @@ module aptos_framework::voting {
             10,
             timestamp::now_seconds() + VOTING_DURATION_SECS,
             early_resolution_threshold,
-            simple_map::create<String, vector<u8>>(),
+            metadata,
         );
-
         proposal_id
+    }
+
+    #[test_only]
+    public fun resolve_proposal_generic<ProposalType>(voting_forum_address: address, proposal_id: u64, is_multi_step: bool) acquires VotingForum {
+        if (is_multi_step) {
+            let execution_hash = vector::empty<u8>();
+            vector::push_back(&mut execution_hash, 1);
+            resolve_multi_step_proposal<TestProposal>(voting_forum_address, proposal_id, execution_hash, vector::empty<u8>());
+        } else {
+            let proposal = resolve<TestProposal>(voting_forum_address, proposal_id);
+            let TestProposal {} = proposal;
+        };
+    }
+
+    #[test_only]
+    public fun create_test_proposal(
+        governance: &signer,
+        early_resolution_threshold: Option<u128>,
+    ): u64 acquires VotingForum {
+        create_test_proposal_generic(governance, early_resolution_threshold, false)
     }
 
     #[test(governance = @0x123)]
@@ -458,15 +544,15 @@ module aptos_framework::voting {
         );
     }
 
-    #[test(aptos_framework = @aptos_framework, governance = @0x123)]
-    public entry fun test_voting_passed(aptos_framework: &signer, governance: &signer) acquires VotingForum {
+    #[test_only]
+    public entry fun test_voting_passed_generic(aptos_framework: &signer, governance: &signer, multi_step_create: bool, multi_step_resolve: bool) acquires VotingForum {
         account::create_account_for_test(@aptos_framework);
         timestamp::set_time_has_started_for_testing(aptos_framework);
 
         // Register voting forum and create a proposal.
         let governance_address = signer::address_of(governance);
         account::create_account_for_test(governance_address);
-        let proposal_id = create_test_proposal(governance, option::none<u128>());
+        let proposal_id = create_test_proposal_generic(governance, option::none<u128>(), multi_step_create);
         assert!(get_proposal_state<TestProposal>(governance_address, proposal_id) == PROPOSAL_STATE_PENDING, 0);
 
         // Vote.
@@ -477,48 +563,71 @@ module aptos_framework::voting {
         // Resolve.
         timestamp::fast_forward_seconds(VOTING_DURATION_SECS + 1);
         assert!(get_proposal_state<TestProposal>(governance_address, proposal_id) == PROPOSAL_STATE_SUCCEEDED, 1);
-        let proposal = resolve<TestProposal>(governance_address, proposal_id);
+        resolve_proposal_generic<TestProposal>(governance_address, proposal_id, multi_step_resolve);
         let voting_forum = borrow_global<VotingForum<TestProposal>>(governance_address);
         assert!(table::borrow(&voting_forum.proposals, proposal_id).is_resolved, 2);
+    }
 
-        let TestProposal {} = proposal;
+    #[test(aptos_framework = @aptos_framework, governance = @0x123)]
+    public entry fun test_voting_passed(aptos_framework: &signer, governance: &signer) acquires VotingForum {
+        test_voting_passed_generic(aptos_framework, governance, false, false);
+    }
+
+    #[test(aptos_framework = @aptos_framework, governance = @0x123)]
+    public entry fun test_voting_passed_multi_step(aptos_framework: &signer, governance: &signer) acquires VotingForum {
+        test_voting_passed_generic(aptos_framework, governance, true, true);
+    }
+
+    #[test(aptos_framework = @aptos_framework, governance = @0x123)]
+    #[expected_failure(abort_code = 0x4000a)]
+    public entry fun test_voting_multi_step_cannot_use_single_step_resolve(aptos_framework: &signer, governance: &signer) acquires VotingForum {
+        test_voting_passed_generic(aptos_framework, governance, true, false);
+    }
+
+    #[test_only]
+    public entry fun test_cannot_resolve_twice_generic(aptos_framework: &signer, governance: &signer, is_multi_step: bool) acquires VotingForum {
+        account::create_account_for_test(@aptos_framework);
+        timestamp::set_time_has_started_for_testing(aptos_framework);
+
+        // Register voting forum and create a proposal.
+        let governance_address = signer::address_of(governance);
+        account::create_account_for_test(governance_address);
+        let proposal_id = create_test_proposal_generic(governance, option::none<u128>(), is_multi_step);
+        assert!(get_proposal_state<TestProposal>(governance_address, proposal_id) == PROPOSAL_STATE_PENDING, 0);
+
+        // Vote.
+        let proof = TestProposal {};
+        vote<TestProposal>(&proof, governance_address, proposal_id, 10, true);
+        let TestProposal {} = proof;
+
+        // Resolve.
+        timestamp::fast_forward_seconds(VOTING_DURATION_SECS + 1);
+        assert!(get_proposal_state<TestProposal>(governance_address, proposal_id) == PROPOSAL_STATE_SUCCEEDED, 1);
+        resolve_proposal_generic<TestProposal>(governance_address, proposal_id, is_multi_step);
+        resolve_proposal_generic<TestProposal>(governance_address, proposal_id, is_multi_step);
     }
 
     #[test(aptos_framework = @aptos_framework, governance = @0x123)]
     #[expected_failure(abort_code = 0x30003)]
     public entry fun test_cannot_resolve_twice(aptos_framework: &signer, governance: &signer) acquires VotingForum {
-        account::create_account_for_test(@aptos_framework);
-        timestamp::set_time_has_started_for_testing(aptos_framework);
-
-        // Register voting forum and create a proposal.
-        let governance_address = signer::address_of(governance);
-        account::create_account_for_test(governance_address);
-        let proposal_id = create_test_proposal(governance, option::none<u128>());
-        assert!(get_proposal_state<TestProposal>(governance_address, proposal_id) == PROPOSAL_STATE_PENDING, 0);
-
-        // Vote.
-        let proof = TestProposal {};
-        vote<TestProposal>(&proof, governance_address, proposal_id, 10, true);
-        let TestProposal {} = proof;
-
-        // Resolve.
-        timestamp::fast_forward_seconds(VOTING_DURATION_SECS + 1);
-        assert!(get_proposal_state<TestProposal>(governance_address, proposal_id) == PROPOSAL_STATE_SUCCEEDED, 1);
-        let TestProposal {} = resolve<TestProposal>(governance_address, proposal_id);
-
-        // Resolve a second time should fail.
-        let TestProposal {} = resolve<TestProposal>(governance_address, proposal_id);
+        test_cannot_resolve_twice_generic(aptos_framework, governance, false);
     }
 
     #[test(aptos_framework = @aptos_framework, governance = @0x123)]
-    public entry fun test_voting_passed_early(aptos_framework: &signer, governance: &signer) acquires VotingForum {
+    #[expected_failure(abort_code = 0x30003)]
+    public entry fun test_cannot_resolve_twice_multi_step(aptos_framework: &signer, governance: &signer) acquires VotingForum {
+        test_cannot_resolve_twice_generic(aptos_framework, governance, true);
+    }
+
+    #[test_only]
+    public entry fun test_voting_passed_early_generic(aptos_framework: &signer, governance: &signer, is_multi_step: bool) acquires VotingForum {
         account::create_account_for_test(@aptos_framework);
         timestamp::set_time_has_started_for_testing(aptos_framework);
 
         // Register voting forum and create a proposal.
         let governance_address = signer::address_of(governance);
         account::create_account_for_test(governance_address);
-        let proposal_id = create_test_proposal(governance, option::some(100));
+        let proposal_id = create_test_proposal_generic(governance, option::some(100), is_multi_step);
         assert!(get_proposal_state<TestProposal>(governance_address, proposal_id) == PROPOSAL_STATE_PENDING, 0);
 
         // Vote.
@@ -530,42 +639,68 @@ module aptos_framework::voting {
         // Resolve early. Need to increase timestamp as resolution cannot happen in the same tx.
         timestamp::fast_forward_seconds(1);
         assert!(get_proposal_state<TestProposal>(governance_address, proposal_id) == PROPOSAL_STATE_SUCCEEDED, 1);
-        let proposal = resolve<TestProposal>(governance_address, proposal_id);
+        resolve_proposal_generic<TestProposal>(governance_address, proposal_id, is_multi_step);
         let voting_forum = borrow_global<VotingForum<TestProposal>>(governance_address);
         assert!(table::borrow(&voting_forum.proposals, proposal_id).is_resolved, 2);
-
-        let TestProposal {} = proposal;
     }
 
     #[test(aptos_framework = @aptos_framework, governance = @0x123)]
-    #[expected_failure(abort_code = 0x30008)]
-    public entry fun test_voting_passed_early_in_same_tx_should_fail(
-        aptos_framework: &signer, governance: &signer) acquires VotingForum {
+    public entry fun test_voting_passed_early(aptos_framework: &signer, governance: &signer) acquires VotingForum {
+        test_voting_passed_early_generic(aptos_framework, governance, false);
+    }
+
+    #[test(aptos_framework = @aptos_framework, governance = @0x123)]
+    public entry fun test_voting_passed_early_multi_step(aptos_framework: &signer, governance: &signer) acquires VotingForum {
+        test_voting_passed_early_generic(aptos_framework, governance, true);
+    }
+
+    #[test_only]
+    public entry fun test_voting_passed_early_in_same_tx_should_fail_generic(
+        aptos_framework: &signer,
+        governance: &signer,
+        is_multi_step: bool
+    ) acquires VotingForum {
         account::create_account_for_test(@aptos_framework);
         timestamp::set_time_has_started_for_testing(aptos_framework);
         let governance_address = signer::address_of(governance);
         account::create_account_for_test(governance_address);
-        let proposal_id = create_test_proposal(governance, option::some(100));
+        let proposal_id = create_test_proposal_generic(governance, option::some(100), is_multi_step);
         let proof = TestProposal {};
         vote<TestProposal>(&proof, governance_address, proposal_id, 40, true);
         vote<TestProposal>(&proof, governance_address, proposal_id, 60, true);
         let TestProposal {} = proof;
 
         // Resolving early should fail since timestamp hasn't changed since the last vote.
-        let proposal = resolve<TestProposal>(governance_address, proposal_id);
-        let TestProposal {} = proposal;
+        resolve_proposal_generic<TestProposal>(governance_address, proposal_id, is_multi_step);
     }
 
     #[test(aptos_framework = @aptos_framework, governance = @0x123)]
-    #[expected_failure(abort_code = 0x30002)]
-    public entry fun test_voting_failed(aptos_framework: &signer, governance: &signer) acquires VotingForum {
+    #[expected_failure(abort_code = 0x30008)]
+    public entry fun test_voting_passed_early_in_same_tx_should_fail(
+        aptos_framework: &signer,
+        governance: &signer
+    ) acquires VotingForum {
+        test_voting_passed_early_in_same_tx_should_fail_generic(aptos_framework, governance, false);
+    }
+
+    #[test(aptos_framework = @aptos_framework, governance = @0x123)]
+    #[expected_failure(abort_code = 0x30008)]
+    public entry fun test_voting_passed_early_in_same_tx_should_fail_multi_step(
+        aptos_framework: &signer,
+        governance: &signer
+    ) acquires VotingForum {
+        test_voting_passed_early_in_same_tx_should_fail_generic(aptos_framework, governance, true);
+    }
+
+    #[test_only]
+    public entry fun test_voting_failed_generic(aptos_framework: &signer, governance: &signer, is_multi_step: bool) acquires VotingForum {
         account::create_account_for_test(@aptos_framework);
         timestamp::set_time_has_started_for_testing(aptos_framework);
 
         // Register voting forum and create a proposal.
         let governance_address = signer::address_of(governance);
         account::create_account_for_test(governance_address);
-        let proposal_id = create_test_proposal(governance, option::none<u128>());
+        let proposal_id = create_test_proposal_generic(governance, option::none<u128>(), is_multi_step);
 
         // Vote.
         let proof = TestProposal {};
@@ -576,8 +711,19 @@ module aptos_framework::voting {
         // Resolve.
         timestamp::fast_forward_seconds(VOTING_DURATION_SECS + 1);
         assert!(get_proposal_state<TestProposal>(governance_address, proposal_id) == PROPOSAL_STATE_FAILED, 1);
-        let proposal = resolve<TestProposal>(governance_address, proposal_id);
-        let TestProposal {} = proposal;
+        resolve_proposal_generic<TestProposal>(governance_address, proposal_id, is_multi_step);
+    }
+
+    #[test(aptos_framework = @aptos_framework, governance = @0x123)]
+    #[expected_failure(abort_code = 0x30002)]
+    public entry fun test_voting_failed(aptos_framework: &signer, governance: &signer) acquires VotingForum {
+        test_voting_failed_generic(aptos_framework, governance, false);
+    }
+
+    #[test(aptos_framework = @aptos_framework, governance = @0x123)]
+    #[expected_failure(abort_code = 0x30002)]
+    public entry fun test_voting_failed_multi_step(aptos_framework: &signer, governance: &signer) acquires VotingForum {
+        test_voting_failed_generic(aptos_framework, governance, true);
     }
 
     #[test(aptos_framework = @aptos_framework, governance = @0x123)]
@@ -596,16 +742,15 @@ module aptos_framework::voting {
         let TestProposal {} = proof;
     }
 
-    #[test(aptos_framework = @aptos_framework, governance = @0x123)]
-    #[expected_failure(abort_code = 0x30002)]
-    public entry fun test_voting_failed_early(aptos_framework: &signer, governance: &signer) acquires VotingForum {
+    #[test_only]
+    public entry fun test_voting_failed_early_generic(aptos_framework: &signer, governance: &signer, is_multi_step: bool) acquires VotingForum {
         account::create_account_for_test(@aptos_framework);
         timestamp::set_time_has_started_for_testing(aptos_framework);
 
         // Register voting forum and create a proposal.
         let governance_address = signer::address_of(governance);
         account::create_account_for_test(governance_address);
-        let proposal_id = create_test_proposal(governance, option::some(100));
+        let proposal_id = create_test_proposal_generic(governance, option::some(100), is_multi_step);
 
         // Vote.
         let proof = TestProposal {};
@@ -616,8 +761,13 @@ module aptos_framework::voting {
         // Resolve.
         timestamp::fast_forward_seconds(VOTING_DURATION_SECS + 1);
         assert!(get_proposal_state<TestProposal>(governance_address, proposal_id) == PROPOSAL_STATE_FAILED, 1);
-        let proposal = resolve<TestProposal>(governance_address, proposal_id);
-        let TestProposal {} = proposal;
+        resolve_proposal_generic<TestProposal>(governance_address, proposal_id, is_multi_step);
+    }
+
+    #[test(aptos_framework = @aptos_framework, governance = @0x123)]
+    #[expected_failure(abort_code = 0x30002)]
+    public entry fun test_voting_failed_early(aptos_framework: &signer, governance: &signer) acquires VotingForum {
+        test_voting_failed_early_generic(aptos_framework, governance, true);
     }
 
     #[test(aptos_framework = @aptos_framework, governance = @0x123)]
