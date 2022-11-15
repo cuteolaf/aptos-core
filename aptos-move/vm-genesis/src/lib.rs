@@ -12,8 +12,8 @@ use aptos_crypto::{
     HashValue, PrivateKey, Uniform,
 };
 use aptos_gas::{
-    AbstractValueSizeGasParameters, AptosGasParameters, InitialGasSchedule, NativeGasParameters,
-    ToOnChainGasSchedule, LATEST_GAS_FEATURE_VERSION,
+    AbstractValueSizeGasParameters, AptosGasParameters, ChangeSetConfigs, InitialGasSchedule,
+    NativeGasParameters, ToOnChainGasSchedule, LATEST_GAS_FEATURE_VERSION,
 };
 use aptos_types::account_config::aptos_test_root_address;
 use aptos_types::on_chain_config::{FeatureFlag, Features};
@@ -150,7 +150,10 @@ pub fn encode_aptos_mainnet_genesis_transaction(
     session1_out.squash(session2_out).unwrap();
 
     let change_set_ext = session1_out
-        .into_change_set(&mut (), LATEST_GAS_FEATURE_VERSION)
+        .into_change_set(
+            &mut (),
+            &ChangeSetConfigs::unlimited_at_gas_feature_version(LATEST_GAS_FEATURE_VERSION),
+        )
         .unwrap();
     let (delta_change_set, change_set) = change_set_ext.into_inner();
 
@@ -258,7 +261,10 @@ pub fn encode_genesis_change_set(
     session1_out.squash(session2_out).unwrap();
 
     let change_set_ext = session1_out
-        .into_change_set(&mut (), LATEST_GAS_FEATURE_VERSION)
+        .into_change_set(
+            &mut (),
+            &ChangeSetConfigs::unlimited_at_gas_feature_version(LATEST_GAS_FEATURE_VERSION),
+        )
         .unwrap();
     let (delta_change_set, change_set) = change_set_ext.into_inner();
 

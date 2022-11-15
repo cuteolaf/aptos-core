@@ -4,6 +4,7 @@
 //! This module contains the official gas meter implementation, along with some top-level gas
 //! parameters and traits to help manipulate them.
 
+use crate::transaction::ChangeSetConfigs;
 use crate::{
     algebra::{AbstractValueSize, Gas},
     instr::InstructionGasParameters,
@@ -29,6 +30,7 @@ use std::collections::BTreeMap;
 // Change log:
 // - V5
 //   - free_write_bytes_quota
+//   - configurable ChangeSetConfigs
 // - V4
 //   - Consider memory leaked for event natives
 // - V3
@@ -248,6 +250,10 @@ impl AptosGasMeter {
 
     pub fn feature_version(&self) -> u64 {
         self.feature_version
+    }
+
+    pub fn change_set_configs(&self) -> &ChangeSetConfigs {
+        &self.storage_gas_params.change_set_configs
     }
 }
 
