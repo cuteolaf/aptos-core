@@ -39,6 +39,7 @@ diesel = { workspace = true }
 forge = { workspace = true }
 framework = { workspace = true }
 hex = { workspace = true }
+move-binary-format = { workspace = true }
 move-core-types = { workspace = true }
 proptest = { workspace = true }
 reqwest = { workspace = true }

@@ -22,6 +22,8 @@ use aptos_types::{
     write_set::WriteSet,
 };
 use rayon::prelude::*;
+use move_core_types::account_address::AccountAddress;
+use aptos_types::transaction::TransactionPayload;
 
 /// This trait describes the VM adapter's interface.
 /// TODO: bring more of the execution logic in aptos_vm into this file.
@@ -159,7 +161,31 @@ pub(crate) fn execute_block_impl<A: VMAdapter, S: StateView>(
     }
 
     for (idx, txn) in signature_verified_block.into_iter().enumerate() {
+        let mut executed_fun = String::new();
         let log_context = AdapterLogSchema::new(data_cache.id(), idx);
+        match &txn {
+            PreprocessedTransaction::UserTransaction(txn) => {
+                match txn.payload() {
+                    TransactionPayload::EntryFunction(ef) => {
+                        let module = ef.module();
+                        let fun = ef.function().as_str();
+                        if module.address() != &AccountAddress::new([
+                            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1,
+                        ]) || fun == "publish_package_txn" {
+                            executed_fun = format!("{}::{}", ef.module(), ef.function());
+                            info!(
+                                log_context,
+                                "EXECUTE FN: {}",
+                                executed_fun,
+                            );
+                        }
+                    }
+                    _ => (),
+                }
+            }
+            _ => (),
+        }
         if should_restart {
             let txn_output =
                 TransactionOutput::new(WriteSet::default(), vec![], 0, TransactionStatus::Retry);
@@ -172,6 +198,15 @@ pub(crate) fn execute_block_impl<A: VMAdapter, S: StateView>(
             &data_cache.as_move_resolver(),
             &log_context,
         )?;
+        if !executed_fun.is_empty() {
+            info!(
+                log_context,
+                "EXECUTED {} - VM_STATUS: {:?}, TXN STATUS: {:?}",
+                executed_fun,
+                vm_status,
+                output_ext.txn_output().status(),
+            );
+        }
 
         // Apply deltas.
         let output = output_ext.into_transaction_output(&data_cache);

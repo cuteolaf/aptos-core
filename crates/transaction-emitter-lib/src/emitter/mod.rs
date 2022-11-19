@@ -43,6 +43,7 @@ use crate::{
         account_generator::AccountGeneratorCreator,
         nft_mint_and_transfer::NFTMintAndTransferGeneratorCreator,
         p2p_transaction_generator::P2PTransactionGeneratorCreator,
+        publish_modules::PublishPackageCreator,
         transaction_mix_generator::TxnMixGeneratorCreator, TransactionGeneratorCreator,
     },
 };
@@ -452,6 +453,12 @@ impl TxnEmitter {
                     )
                     .await,
                 ),
+                TransactionType::PublishPackage => Box::new(PublishPackageCreator::new(
+                    self.from_rng(),
+                    txn_factory.clone(),
+                    all_addresses.clone(),
+                    req.gas_price,
+                )),
             };
             txn_generator_creator_mix.push((txn_generator_creator, weight));
         }
