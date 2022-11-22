@@ -1313,6 +1313,7 @@ pub enum InternalOperation {
     SetOperator(SetOperator),
     SetVoter(SetVoter),
     InitializeStakePool(InitializeStakePool),
+    ResetLockup(ResetLockup),
 }
 
 impl InternalOperation {
@@ -1415,6 +1416,23 @@ impl InternalOperation {
                                 }));
                             }
                         }
+                        Ok(OperationType::ResetLockup) => {
+                            if let (Some(OperationMetadata { operator, .. }), Some(account)) =
+                                (&operation.metadata, &operation.account)
+                            {
+                                let operator = if let Some(operator) = operator {
+                                    operator.account_address()?
+                                } else {
+                                    return Err(ApiError::InvalidInput(Some(
+                                        "Reset lockup missing operator field".to_string(),
+                                    )));
+                                };
+                                return Ok(Self::ResetLockup(ResetLockup {
+                                    owner: account.account_address()?,
+                                    operator,
+                                }));
+                            }
+                        }
                         _ => {}
                     }
                 }
@@ -1441,6 +1459,7 @@ impl InternalOperation {
             Self::SetOperator(inner) => inner.owner,
             Self::SetVoter(inner) => inner.owner,
             Self::InitializeStakePool(inner) => inner.owner,
+            Self::ResetLockup(inner) => inner.owner,
         }
     }
 
@@ -1496,6 +1515,10 @@ impl InternalOperation {
                     init_stake_pool.seed.clone(),
                 ),
                 init_stake_pool.owner,
+            ),
+            InternalOperation::ResetLockup(reset_lockup) => (
+                aptos_stdlib::staking_contract_reset_lockup(reset_lockup.operator),
+                reset_lockup.owner,
             ),
         })
     }
@@ -1648,4 +1671,10 @@ pub struct InitializeStakePool {
     pub amount: u64,
     pub commission_percentage: u64,
     pub seed: Vec<u8>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct ResetLockup {
+    pub owner: AccountAddress,
+    pub operator: AccountAddress,
 }

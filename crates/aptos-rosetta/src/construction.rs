@@ -888,6 +888,21 @@ async fn construction_payloads(
                 ))));
             }
         }
+        InternalOperation::ResetLockup(inner) => {
+            if let InternalOperation::ResetLockup(ref metadata_op) = metadata.internal_operation {
+                if inner.owner != metadata_op.owner || inner.operator != metadata_op.operator {
+                    return Err(ApiError::InvalidInput(Some(format!(
+                        "Reset lockup operation doesn't match metadata {:?} vs {:?}",
+                        inner, metadata.internal_operation
+                    ))));
+                }
+            } else {
+                return Err(ApiError::InvalidInput(Some(format!(
+                    "Reset lockup operation doesn't match metadata {:?} vs {:?}",
+                    inner, metadata.internal_operation
+                ))));
+            }
+        }
     }
 
     // Encode operation
