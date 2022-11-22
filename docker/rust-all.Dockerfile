@@ -289,11 +289,9 @@ RUN apt-get update && apt-get install -y \
     strace \
     htop \
     valgrind \
-    bpfcc-tools \
-    python3-bpfcc \
-    libbpfcc \
-    libbpfcc-dev \
-    linux-headers-5.10.0-19-cloud-amd64
+
+RUN echo "deb http://deb.debian.org/debian sid main contrib non-free" >> /etc/apt/sources.list
+RUN echo "deb-src http://deb.debian.org/debian sid main contrib non-free" >> /etc/apt/sources.list
 
 RUN apt-get update && apt-get install -y \
 		arping bison clang-format cmake dh-python \
@@ -304,6 +302,11 @@ RUN apt-get update && apt-get install -y \
     && apt-get clean && rm -r /var/lib/apt/lists/*
 
 RUN git clone https://github.com/iovisor/bcc.git --depth 1
+RUN mkdir bcc/build
+WORKDIR  bcc/build
+RUN cmake ..
+RUN make
+RUN make install
 
 # Capture backtrace on error
 ENV RUST_BACKTRACE 1
