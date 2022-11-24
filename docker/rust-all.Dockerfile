@@ -289,6 +289,7 @@ RUN apt-get update && apt-get install -y \
     strace \
     htop \
     valgrind \
+    && apt-get clean && rm -r /var/lib/apt/lists/*
 
 RUN echo "deb http://deb.debian.org/debian sid main contrib non-free" >> /etc/apt/sources.list
 RUN echo "deb-src http://deb.debian.org/debian sid main contrib non-free" >> /etc/apt/sources.list
@@ -307,6 +308,9 @@ WORKDIR  bcc/build
 RUN cmake ..
 RUN make
 RUN make install
+WORKDIR ../..
+RUN git clone https://github.com/Markuze/linux-headers.git
+
 
 # Capture backtrace on error
 ENV RUST_BACKTRACE 1
