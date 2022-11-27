@@ -120,7 +120,7 @@ RUN cmake ..
 RUN make
 RUN make install
 WORKDIR ..
-RUN git clone https://github.com/teambi0s/rust_demangler.git
+RUN cp -r rust_demangler /usr/lib/python3/dist-packages/rust_demangler
 
 ### Node Checker Image ###
 
