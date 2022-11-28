@@ -100,6 +100,7 @@ RUN apt-get update && apt-get install -y \
     binutils \
     strace \
     htop \
+    sysstat \
     && apt-get clean && rm -r /var/lib/apt/lists/*
 
 RUN echo "deb http://deb.debian.org/debian sid main contrib non-free" >> /etc/apt/sources.list
