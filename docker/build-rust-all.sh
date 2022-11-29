@@ -9,8 +9,7 @@ FEATURES=${FEATURES:-""}
 echo "Building all rust-based docker images"
 echo "PROFILE: $PROFILE"
 echo "FEATURES: $FEATURES"
-# -Cforce-unwind-tables=yes
-export RUSTFLAGS="--cfg tokio_unstable -Cforce-frame-pointers=yes"
+
 # Build all the rust binaries
 cargo build --locked --profile=$PROFILE \
     -p aptos \
@@ -25,6 +24,7 @@ cargo build --locked --profile=$PROFILE \
     -p transaction-emitter \
     "$@"
 
+export RUSTFLAGS="--cfg tokio_unstable -Cforce-frame-pointers=yes -Cforce-unwind-tables=yes -C relocation-model=static"
 # Build aptos-node separately
 cargo build --locked --profile=$PROFILE \
     -p aptos-node \
