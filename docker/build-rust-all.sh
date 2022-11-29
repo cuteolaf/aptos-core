@@ -24,7 +24,7 @@ cargo build --locked --profile=$PROFILE \
     -p transaction-emitter \
     "$@"
 
-export RUSTFLAGS="--cfg tokio_unstable -Cforce-frame-pointers=yes -Cforce-unwind-tables=yes -C relocation-model=pie"
+export RUSTFLAGS="--cfg tokio_unstable -Cforce-frame-pointers=yes -Cforce-unwind-tables=yes -Ctarget-feature=+crt-static -Cincremental -Clinker-plugin-lto"
 # Build aptos-node separately
 cargo build --locked --profile=$PROFILE \
     -p aptos-node \
